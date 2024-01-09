@@ -1,5 +1,5 @@
 // Firmware for the LED Driver Board
-// Current version 1.02 - Changes history:
+// Current version 1.04 - Changes history:
 // December 19, 2023 - ver. 1.01: Turned LEDs OFF before shuting off power
 // December 20, 2023 - ver. 1.02: Added support for modulating the LEDs voltage
 // Decemebr 22, 2023 - ver. 1.03: Corrected voltage scale and fixed power on/off sequence
@@ -114,7 +114,7 @@ void setup() {
   SerialUSB.begin(115200);
   delay(2000);
   SerialUSB.println("Hello from the LED driver board!");
-  SerialUSB.println("Ver. 1.03 with MIDAS LPC support");
+  SerialUSB.println("Ver. 1.04 with MIDAS LPC support");
   
   pinMode(pin_EN_3V3_ANALOG, OUTPUT);
   pinMode(pin_EN_3V3_TRIGGER, OUTPUT);
