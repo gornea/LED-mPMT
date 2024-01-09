@@ -3,6 +3,7 @@
 // December 19, 2023 - ver. 1.01: Turned LEDs OFF before shuting off power
 // December 20, 2023 - ver. 1.02: Added support for modulating the LEDs voltage
 // Decemebr 22, 2023 - ver. 1.03: Corrected voltage scale and fixed power on/off sequence
+// January 1, 2024 - ver. 1.04: Nick further fixed on/off sequence, including in 'post' routine, also enable 3v3 trigger supply
 
 #include <stdint.h>
 #include <string>
@@ -262,9 +263,11 @@ void loop() {
         }
         else if ((input == "power on") || (input == "E")) {
           digitalWrite(pin_EN_3V3_ANALOG, HIGH);
+          digitalWrite(pin_EN_3V3_TRIGGER, HIGH);
           delay(100);
           digitalWrite(pin_EN_BIAS, HIGH);
           analogWrite(pin_LED_PSU_CTRL, (uint32_t)(80)); // set LED voltage to 12 V
+          delay(100);
           if (input == "E") {
             SerialUSB.print("\r\nBoard Active\r\n");
           }
@@ -276,10 +279,12 @@ void loop() {
           for (uint32_t i = 0; i < 8; i++) {
             LED_drivers[i].bias_abs(0);
           }
-          digitalWrite(pin_LED_PSU_CTRL, HIGH); // set LED voltage to minimum
+          digitalWrite(pin_LED_PSU_CTRL, LOW);
           digitalWrite(pin_EN_BIAS, LOW);
           delay(100);
           digitalWrite(pin_EN_3V3_ANALOG, LOW);
+          digitalWrite(pin_EN_3V3_TRIGGER, LOW);
+          delay(100);
           if (input == "D") {
             SerialUSB.print("\r\nBoard Standby\r\n");
           }
@@ -297,7 +302,10 @@ void loop() {
         }
         else if (input == "post") {
           digitalWrite(pin_EN_3V3_ANALOG, HIGH);
+          delay(100);
           digitalWrite(pin_EN_BIAS, HIGH);
+          analogWrite(pin_LED_PSU_CTRL, (uint32_t)(80)); // set LED voltage to 12 V
+          delay(100);
           for (uint32_t i = 0; i < 8; i++) {
             for (uint32_t j = 0; j < 255; j += 15) {
               LED_drivers[i].bias_abs(j);
