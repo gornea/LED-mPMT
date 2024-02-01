@@ -1,16 +1,19 @@
 // Firmware for the LED Driver Board
-// Current version 1.04 - Changes history:
+// Current version 1.10 - Changes history:
 // December 19, 2023 - ver. 1.01: Turned LEDs OFF before shuting off power
 // December 20, 2023 - ver. 1.02: Added support for modulating the LEDs voltage
 // Decemebr 22, 2023 - ver. 1.03: Corrected voltage scale and fixed power on/off sequence
-// January 1, 2024 - ver. 1.04: Nick further fixed on/off sequence, including in 'post' routine, also enable 3v3 trigger supply
+// January   1, 2024 - ver. 1.04: Nick further fixed on/off sequence, including in 'post' routine, also enable 3v3 trigger supply
+// Janaury  31, 2024 - ver. 1.10: Added support for pulsed mode
 
 #include <stdint.h>
 #include <string>
-#include "ERC_common.hpp"
+// #include "ERC_common.hpp"
 
-uint32_t active_driver = 0;
-uint32_t all_drivers = 0;
+#define CURRENT_CTRL 0
+#define PULSED_CTRL 1
+
+const uint32_t MACH_I_TYPE           =  PULSED_CTRL   ; // set this constant with above values depending on hardware type
 
 const uint32_t pin_SPI_CS1_SWDIO     =  PA13          ;
 const uint32_t pin_SPI_CS2_SWCLK     =  PA14          ;
@@ -44,6 +47,11 @@ const uint32_t pin_EN_3V3_ANALOG     =  PC13          ;
 const uint32_t pin_EN_3V3_TRIGGER    =  PC14          ;
 const uint32_t pin_EN_BIAS           =  PC15          ;
 
+uint32_t active_driver = 0;
+uint32_t all_drivers = 0;
+HardwareTimer * pulser = NULL;
+uint32_t trig_rate_fact;
+bool timer_on = false;
 
 //uint8_t rx_buffer[1000];
 //uint8_t tx_buffer[1000];
@@ -114,7 +122,27 @@ void setup() {
   SerialUSB.begin(115200);
   delay(2000);
   SerialUSB.println("Hello from the LED driver board!");
-  SerialUSB.println("Ver. 1.04 with MIDAS LPC support");
+  SerialUSB.println("Ver. 1.10 with MIDAS LPC support");
+  
+  switch (MACH_I_TYPE) {
+    case CURRENT_CTRL:
+      SerialUSB.println("Hardware Ver.: current modulated");
+
+      break;
+    case PULSED_CTRL:
+      SerialUSB.println("Hardware Ver.: var. freq. pulsed");
+
+      break;
+    default:
+      SerialUSB.println(" *** Unsupported hardware ID ***");
+      while (true) {
+        delay(2000);
+        SerialUSB.println(" *** Unsupported hardware ID ***");
+        SerialUSB.println("Try to reflash the driver board!");
+      }
+
+      break;
+  }
   
   pinMode(pin_EN_3V3_ANALOG, OUTPUT);
   pinMode(pin_EN_3V3_TRIGGER, OUTPUT);
@@ -153,6 +181,25 @@ void setup() {
   LED_drivers[7].set_imon_pin(pin_LED_IMON7);
   LED_drivers[7].bias_abs(0);
   
+  if (MACH_I_TYPE == PULSED_CTRL) {
+    pulser = new HardwareTimer(TIM1);
+    if (pulser == NULL) {
+      while (true) {
+        delay(2000);
+        SerialUSB.println("ERROR: Could not access timer 1 to generate pulses!");
+      }
+    }
+    else {
+      pulser->setMode((uint32_t)1, TIMER_OUTPUT_COMPARE_PWM1, pin_LOCAL_TRIGGER);
+      pulser->setPrescaleFactor((uint32_t)1);
+      trig_rate_fact = (uint32_t)50000 & 0xFFFF; // set the pulse duration to a large number, masked by 16-bit width
+      pulser->setOverflow(trig_rate_fact); // provide some default rate, 100 Mhz / 50,000 = 2 kHz
+      pulser->setCaptureCompare((uint32_t)1, trig_rate_fact / 2);
+      timer_on = false;
+      // pulser->resume(); // by default we don't start the pulses, let the user send a command
+    }
+  }
+
   return;
 }
 
@@ -290,6 +337,36 @@ void loop() {
           }
           else {
             SerialUSB.println("Board power is OFF");
+          }
+        }
+        else if (input == "pulses on") {
+          if (MACH_I_TYPE == PULSED_CTRL) {
+            if (timer_on) {
+              SerialUSB.println("Pulse generation is already ON");
+            }
+            else {
+              pulser->resume();
+              timer_on = true;
+              SerialUSB.println("Pulse generation set ON");
+            }
+          }
+          else {
+            SerialUSB.println("Invalid command for this hardware version!");
+          }
+        }
+        else if (input == "pulses off") {
+          if (MACH_I_TYPE == PULSED_CTRL) {
+            if (timer_on) {
+              pulser->pause();
+              timer_on = false;
+              SerialUSB.println("Pulse generation set OFF");
+            }
+            else {
+              SerialUSB.println("Pulse generation is already OFF");
+            }
+          }
+          else {
+            SerialUSB.println("Invalid command for this hardware version!");
           }
         }
         else if (input == "debug on") {
@@ -447,6 +524,29 @@ void loop() {
             SerialUSB.println(" V");
           }
         }
+        else if ((input.length() >= 15) && (input.substr(0, 12) == "set rate at ")) {
+          if (MACH_I_TYPE == PULSED_CTRL) {
+            temp_f = std::stof(input.substr(12, (input.length() - 12))); // get the floating point number for the rate in MHz
+            temp_f = 100.0 / temp_f; // calculate the floating point value of the trigger rate factor
+            trig_rate_fact = (uint32_t)(temp_f) & 0xFFFF; // convert to integer and limit to 16-bit width
+            if (trig_rate_fact < (uint32_t)10) { // the pulses for higher rate than 10 MHz became very distorted
+              trig_rate_fact = (uint32_t)10;
+            } 
+            if (timer_on) {
+              pulser->pause();
+            }
+            pulser->setOverflow(trig_rate_fact);
+            pulser->setCaptureCompare((uint32_t)1, trig_rate_fact / 2);
+            if (timer_on) {
+              pulser->resume();
+            }
+            SerialUSB.print("Pulse rate set to 100 MHz / ");
+            SerialUSB.println(trig_rate_fact);
+          }
+          else {
+            SerialUSB.println("Invalid command for this hardware version!");
+          }
+        }
         else if ((input == "help") || (input == "?")) {
           std::string temp = "\
           help OR ?\r\n\
@@ -459,6 +559,9 @@ void loop() {
           power on\r\n\
           power off\r\n\
           set voltage at <float>\r\n\
+          set rate at <float>\r\n\
+          pulses on\r\n\
+          pulses off\r\n\
           debug on\r\n\
           debug off\r\n\
           post\r\n";
